@@ -1,9 +1,14 @@
 mod cpu;
+mod feature;
 
 use crate::errors::*;
+use crate::LineInfoContext;
 use crate::{fail_with_message, success_with_message};
+use crate::{init_segments, SegmentContext};
 use crate::{is_dec_digit, is_hex_digit, is_id_char, is_id_start};
-use cpu::*;
+use crate::{StringPool, SymbolContext};
+pub use cpu::*;
+use feature::*;
 use std::collections::HashMap;
 use std::env::{args, vars};
 
@@ -37,7 +42,53 @@ static OPT_TAB: [LongOpt; 21] = [
   LongOpt::new("--version", 0, opt_version),
 ];
 
-pub struct CommandLine {
+pub struct GlobalContext {
+  settings: Settings,
+  segment_context: SegmentContext,
+  symbol_context: SymbolContext,
+  string_pool: StringPool,
+  line_info_context: LineInfoContext,
+}
+
+impl GlobalContext {
+  pub fn new(program_name: String) -> ContextBuilder {
+    ContextBuilder {
+      settings: Settings::new(program_name),
+      segment_context: None,
+      symbol_context: None,
+      string_pool: None,
+      line_info_context: None,
+    }
+  }
+}
+
+pub struct ContextBuilder {
+  settings: Settings,
+  segment_context: Option<SegmentContext>,
+  symbol_context: Option<SymbolContext>,
+  string_pool: Option<StringPool>,
+  line_info_context: Option<LineInfoContext>,
+}
+
+impl ContextBuilder {
+  pub fn build(self) -> GlobalContext {
+    GlobalContext {
+      settings: self.settings,
+      segment_context: self
+        .segment_context
+        .expect("No segment context was initialized"),
+      symbol_context: self
+        .symbol_context
+        .expect("No symbol context was initialized"),
+      string_pool: self.string_pool.expect("No string pool was initialized"),
+      line_info_context: self
+        .line_info_context
+        .expect("No line info context was initialized"),
+    }
+  }
+}
+
+pub struct Settings {
   program_name: String,
   auto_import: bool,
   cpu: CpuType,
@@ -62,9 +113,9 @@ pub struct CommandLine {
   out_file: String,
 }
 
-impl CommandLine {
-  pub fn new(program_name: String) -> CommandLine {
-    CommandLine {
+impl Settings {
+  pub fn new(program_name: String) -> Settings {
+    Settings {
       program_name,
       auto_import: false,
       cpu: CpuType::Unknown,
@@ -94,66 +145,19 @@ impl CommandLine {
 pub struct LongOpt {
   option: &'static str,
   arg_count: usize,
-  func: fn(String, String, CommandLine) -> CommandLine,
+  func: fn(String, String, GlobalContext) -> GlobalContext,
 }
 
 impl LongOpt {
   pub const fn new(
     option: &'static str,
     count: usize,
-    f: fn(String, String, CommandLine) -> CommandLine,
+    f: fn(String, String, GlobalContext) -> GlobalContext,
   ) -> LongOpt {
     LongOpt {
       option: option,
       arg_count: count,
       func: f,
-    }
-  }
-}
-
-pub enum Feature {
-  Unknown,
-  DollarIsPc,
-  LabelsWithoutColons,
-  LooseStringTerm,
-  LooseCharTerm,
-  AtInIdentifiers,
-  DollarInIdentifiers,
-  LeadingDotInIdentifiers,
-  OrgPerSeg,
-  PcAssignment,
-  MissingCharTerm,
-  UbiquitousIdents,
-  CComments,
-  ForceRange,
-  UnderlineInNumbers,
-  Addrsize,
-  BracketAsIndirect,
-  StringEscapes,
-}
-
-impl Feature {
-  fn from_string(s: String) -> Feature {
-    match s.to_ascii_lowercase().as_ref() {
-      "Unknown" => Feature::Unknown,
-      "DollarIsPc" => Feature::DollarIsPc,
-      "LabelsWithoutColons" => Feature::LabelsWithoutColons,
-      "LooseStringTerm" => Feature::LooseStringTerm,
-      "LooseCharTerm" => Feature::LooseCharTerm,
-      "AtInIdentifiers" => Feature::AtInIdentifiers,
-      "DollarInIdentifiers" => Feature::DollarInIdentifiers,
-      "LeadingDotInIdentifiers" => Feature::LeadingDotInIdentifiers,
-      "OrgPerSeg" => Feature::OrgPerSeg,
-      "PcAssignment" => Feature::PcAssignment,
-      "MissingCharTerm" => Feature::MissingCharTerm,
-      "UbiquitousIdents" => Feature::UbiquitousIdents,
-      "CComments" => Feature::CComments,
-      "ForceRange" => Feature::ForceRange,
-      "UnderlineInNumbers" => Feature::UnderlineInNumbers,
-      "Addrsize" => Feature::Addrsize,
-      "BracketAsIndirect" => Feature::BracketAsIndirect,
-      "StringEscapes" => Feature::StringEscapes,
-      _ => unknown_option(&s),
     }
   }
 }
@@ -205,72 +209,72 @@ fn usage(program_name: String) -> String {
   start
 }
 
-fn opt_auto_import(_: String, _: String, mut cmd: CommandLine) -> CommandLine {
-  cmd.auto_import = true;
+fn opt_auto_import(_: String, _: String, mut cmd: GlobalContext) -> GlobalContext {
+  cmd.settings.auto_import = true;
   cmd
 }
 
-fn opt_bin_include_dir(_: String, arg: String, mut cmd: CommandLine) -> CommandLine {
-  cmd.bin_search_paths.push(arg);
+fn opt_bin_include_dir(_: String, arg: String, mut cmd: GlobalContext) -> GlobalContext {
+  cmd.settings.bin_search_paths.push(arg);
   cmd
 }
 
-fn opt_cpu(_: String, arg: String, mut cmd: CommandLine) -> CommandLine {
-  cmd.cpu = CpuType::from_string(arg);
+fn opt_cpu(_: String, arg: String, mut cmd: GlobalContext) -> GlobalContext {
+  cmd.settings.cpu = CpuType::from_string(arg);
   cmd
 }
 
-fn opt_create_dep(opt: String, arg: String, mut cmd: CommandLine) -> CommandLine {
-  if !cmd.dep_name.is_empty() {
+fn opt_create_dep(opt: String, arg: String, mut cmd: GlobalContext) -> GlobalContext {
+  if !cmd.settings.dep_name.is_empty() {
     invalid_repeated_option(&opt);
   }
-  cmd.dep_name = arg;
+  cmd.settings.dep_name = arg;
   cmd
 }
 
-fn opt_create_full_dep(opt: String, arg: String, mut cmd: CommandLine) -> CommandLine {
-  if !cmd.full_dep_name.is_empty() {
+fn opt_create_full_dep(opt: String, arg: String, mut cmd: GlobalContext) -> GlobalContext {
+  if !cmd.settings.full_dep_name.is_empty() {
     invalid_repeated_option(&opt);
   }
-  cmd.full_dep_name = arg;
+  cmd.settings.full_dep_name = arg;
   cmd
 }
 
-fn opt_debug(_: String, _: String, mut command_line: CommandLine) -> CommandLine {
-  command_line.debug_mode += 1;
+fn opt_debug(_: String, _: String, mut command_line: GlobalContext) -> GlobalContext {
+  command_line.settings.debug_mode += 1;
   command_line
 }
 
-fn opt_debug_info(_: String, _: String, mut command_line: CommandLine) -> CommandLine {
-  command_line.debug_info = true;
+fn opt_debug_info(_: String, _: String, mut command_line: GlobalContext) -> GlobalContext {
+  command_line.settings.debug_info = true;
   command_line
 }
 
-fn opt_feature(_: String, arg: String, mut cmd: CommandLine) -> CommandLine {
-  cmd.feature = Feature::from_string(arg);
+fn opt_feature(_: String, arg: String, mut cmd: GlobalContext) -> GlobalContext {
+  cmd.settings.feature = Feature::from_string(arg);
   cmd
 }
 
-fn opt_help(_: String, _: String, cmd: CommandLine) -> CommandLine {
-  success_with_message(&usage(cmd.program_name))
+fn opt_help(_: String, _: String, cmd: GlobalContext) -> GlobalContext {
+  success_with_message(&usage(cmd.settings.program_name))
 }
 
-fn opt_ignore_case(_: String, _: String, mut cmd: CommandLine) -> CommandLine {
-  cmd.ignore_case = true;
+fn opt_ignore_case(_: String, _: String, mut cmd: GlobalContext) -> GlobalContext {
+  cmd.settings.ignore_case = true;
   cmd
 }
 
-fn opt_include_dir(_: String, arg: String, mut cmd: CommandLine) -> CommandLine {
-  cmd.inc_search_paths.push(arg);
+fn opt_include_dir(_: String, arg: String, mut cmd: GlobalContext) -> GlobalContext {
+  cmd.settings.inc_search_paths.push(arg);
   cmd
 }
 
-fn opt_large_alignment(_: String, _: String, mut cmd: CommandLine) -> CommandLine {
-  cmd.large_alignment = true;
+fn opt_large_alignment(_: String, _: String, mut cmd: GlobalContext) -> GlobalContext {
+  cmd.settings.large_alignment = true;
   cmd
 }
 
-fn opt_list_bytes(opt: String, arg: String, mut cmd: CommandLine) -> CommandLine {
+fn opt_list_bytes(opt: String, arg: String, mut cmd: GlobalContext) -> GlobalContext {
   let num = u8::from_str_radix(&arg, 10);
   let num = match num {
     Ok(n) => n,
@@ -279,24 +283,24 @@ fn opt_list_bytes(opt: String, arg: String, mut cmd: CommandLine) -> CommandLine
   if num < MIN_LIST_BYTES {
     invalid_number_option(&arg, &opt);
   }
-  cmd.list_bytes = num;
+  cmd.settings.list_bytes = num;
   cmd
 }
 
-fn opt_listing(opt: String, arg: String, mut cmd: CommandLine) -> CommandLine {
-  if !cmd.listing.is_empty() {
+fn opt_listing(opt: String, arg: String, mut cmd: GlobalContext) -> GlobalContext {
+  if !cmd.settings.listing.is_empty() {
     invalid_repeated_option(&opt);
   }
-  cmd.listing = arg;
+  cmd.settings.listing = arg;
   cmd
 }
 
-fn opt_memory_model(_: String, arg: String, mut cmd: CommandLine) -> CommandLine {
-  cmd.memory_model = MemoryModel::from_string(arg);
+fn opt_memory_model(_: String, arg: String, mut cmd: GlobalContext) -> GlobalContext {
+  cmd.settings.memory_model = MemoryModel::from_string(arg);
   cmd
 }
 
-fn opt_page_length(opt: String, arg: String, mut cmd: CommandLine) -> CommandLine {
+fn opt_page_length(opt: String, arg: String, mut cmd: GlobalContext) -> GlobalContext {
   let num = u8::from_str_radix(&arg, 10);
   let num = match num {
     Ok(n) => n,
@@ -305,56 +309,56 @@ fn opt_page_length(opt: String, arg: String, mut cmd: CommandLine) -> CommandLin
   if num < MIN_PAGE_LEN || num > MAX_PAGE_LEN {
     invalid_number_option(&arg, &opt);
   }
-  cmd.page_length = num;
+  cmd.settings.page_length = num;
   cmd
 }
 
-fn opt_relax_checks(_: String, _: String, mut cmd: CommandLine) -> CommandLine {
-  cmd.relax_checks = true;
+fn opt_relax_checks(_: String, _: String, mut cmd: GlobalContext) -> GlobalContext {
+  cmd.settings.relax_checks = true;
   cmd
 }
 
-fn opt_smart(_: String, _: String, mut cmd: CommandLine) -> CommandLine {
-  cmd.smart = true;
+fn opt_smart(_: String, _: String, mut cmd: GlobalContext) -> GlobalContext {
+  cmd.settings.smart = true;
   cmd
 }
 
-fn opt_target(_: String, arg: String, mut cmd: CommandLine) -> CommandLine {
-  cmd.target = TargetSystem::from_string(arg);
+fn opt_target(_: String, arg: String, mut cmd: GlobalContext) -> GlobalContext {
+  cmd.settings.target = TargetSystem::from_string(arg);
   cmd
 }
 
-fn opt_verbose(_: String, _: String, mut cmd: CommandLine) -> CommandLine {
-  cmd.verbose += 1;
+fn opt_verbose(_: String, _: String, mut cmd: GlobalContext) -> GlobalContext {
+  cmd.settings.verbose += 1;
   cmd
 }
 
-fn opt_version(_: String, _: String, cmd: CommandLine) -> CommandLine {
-  success_with_message(&format!("{} V{}", cmd.program_name, VERSION))
+fn opt_version(_: String, _: String, cmd: GlobalContext) -> GlobalContext {
+  success_with_message(&format!("{} V{}", cmd.settings.program_name, VERSION))
 }
 
-pub fn init_command_line(sym_map: &mut HashMap<String, String>) -> CommandLine {
+pub fn init_application(sym_map: &mut HashMap<String, String>) -> GlobalContext {
   let mut args = args();
   let program_name = args.next().unwrap();
   let program_name = program_name.split("/").last().unwrap();
-  let mut command_line = CommandLine::new(program_name.to_owned());
-  command_line = parse_args(args.collect(), command_line, sym_map);
-  if command_line.in_file.is_empty() {
+  let mut context_builder = GlobalContext::new(program_name.to_owned());
+  init_sym_context(&mut context_builder);
+  init_seg_context(&mut context_builder);
+  init_string_pool(&mut context_builder);
+  init_line_info_context(&mut context_builder);
+  let mut global_context = context_builder.build();
+  global_context = parse_args(args.collect(), global_context);
+  if global_context.settings.in_file.is_empty() {
     fail_with_message(&"No input files".to_string())
   }
-  finish_include_paths(&mut command_line);
-  set_default_cpu(&mut command_line);
-  set_segment_sizes(&mut command_line);
-  command_line
+  finish_include_paths(&mut global_context);
+  set_default_cpu(&mut global_context);
+  global_context
 }
 
-fn parse_args(
-  mut args: Vec<String>,
-  command_line: CommandLine,
-  sym_map: &mut HashMap<String, String>,
-) -> CommandLine {
+fn parse_args(mut args: Vec<String>, context: GlobalContext) -> GlobalContext {
   let mut next = args.get(0);
-  let mut cmd = command_line;
+  let mut cmd = context;
   while next.is_some() {
     let arg = args.remove(0);
     let first_char = arg.chars().next().expect("empty arg");
@@ -401,7 +405,7 @@ fn parse_args(
               'o' => {
                 test_for_arg(&arg, args.get(0));
                 second_arg = args.remove(0);
-                cmd.out_file = second_arg;
+                cmd.settings.out_file = second_arg;
                 cmd
               }
               's' => opt_smart(arg, second_arg, cmd),
@@ -453,10 +457,10 @@ fn parse_args(
                     next = chars.next();
                   }
                 }
-                if sym_map.get(&name).is_some() {
+                if cmd.symbol_context.get_map().get_symbol(&name).is_some() {
                   fail_with_message(&format!("Cannot define symbol twice: {}", name))
                 }
-                sym_map.insert(name, value);
+                cmd.symbol_context.get_map_mut().add_symbol(&name, &value);
                 cmd
               }
               'I' => {
@@ -476,9 +480,9 @@ fn parse_args(
           }
         }
       }
-      false => match cmd.in_file.is_empty() {
+      false => match cmd.settings.in_file.is_empty() {
         true => {
-          cmd.in_file = arg;
+          cmd.settings.in_file = arg;
         }
         false => fail_with_message(&format!("Don't know what to do with {}", arg)),
       },
@@ -488,34 +492,51 @@ fn parse_args(
   cmd
 }
 
-fn finish_include_paths(cmd: &mut CommandLine) {
+fn finish_include_paths(cmd: &mut GlobalContext) {
   let vars = vars();
   for (k, v) in vars {
     match k.as_ref() {
-      "CA65_INC" => cmd.inc_search_paths.push(v),
+      "CA65_INC" => cmd.settings.inc_search_paths.push(v),
       "CA65_HOME" => {
         let v = format!("{}/asminc", v);
-        cmd.inc_search_paths.push(v);
+        cmd.settings.inc_search_paths.push(v);
       }
       _ => panic!(),
     }
   }
 }
 
-fn set_default_cpu(cmd: &mut CommandLine) {
-  match cmd.cpu {
-    CpuType::Unknown => match cmd.target {
-      TargetSystem::Unknown => cmd.cpu = CpuType::C6502,
+fn set_default_cpu(cmd: &mut GlobalContext) {
+  match cmd.settings.cpu {
+    CpuType::Unknown => match cmd.settings.target {
+      TargetSystem::Unknown => cmd.settings.cpu = CpuType::C6502,
       _ => {
-        cmd.cpu = get_target_properties(&cmd.target).get_default_cpu();
+        cmd.settings.cpu = get_target_properties(&cmd.settings.target).get_default_cpu();
       }
     },
     _ => (),
   }
 }
 
-fn set_segment_sizes(cmd: &mut CommandLine) {
-  todo!();
+fn init_seg_context(cmd: &mut ContextBuilder) {
+  let seg_context = init_segments(&cmd.settings.memory_model);
+  cmd.segment_context = Some(seg_context);
+}
+
+fn init_sym_context(cmd: &mut ContextBuilder) {
+  const GLOBAL_NAMESPACE: String = String::new();
+  let sym_context = SymbolContext::new(&GLOBAL_NAMESPACE);
+  cmd.symbol_context = Some(sym_context);
+}
+
+fn init_line_info_context(cmd: &mut ContextBuilder) {
+  let context = LineInfoContext::new();
+  cmd.line_info_context = Some(context);
+}
+
+fn init_string_pool(cmd: &mut ContextBuilder) {
+  let pool = StringPool::new();
+  cmd.string_pool = Some(pool);
 }
 
 fn test_for_arg(arg: &String, test: Option<&String>) {

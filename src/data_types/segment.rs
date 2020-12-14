@@ -1,12 +1,26 @@
-const ABS_SIZE: u8 = 0x02;
-const ZP_SIZE: u8 = 0x01;
+use crate::init::MemoryModel;
 
-pub fn init_segments() -> SegmentContext {
-  let start_segment = Segment::new_from_def(SegDef::new("CODE", ABS_SIZE), 0);
+const _ADDR_SIZE_DEFAULT: u8 = 0x00;
+const ZP_SIZE: u8 = 0x01;
+const ABS_SIZE: u8 = 0x02;
+const ADDR_SIZE_FAR: u8 = 0x03;
+const _ADDR_SIZE_LONG: u8 = 0x04;
+const _ADDR_SIZE_INVALID: u8 = 0xFF;
+
+pub fn init_segments(model: &MemoryModel) -> SegmentContext {
+  let size = match model {
+    MemoryModel::Near => ABS_SIZE,
+    _ => ADDR_SIZE_FAR,
+  };
+  let start_segment = Segment::new_from_def(SegDef::new("CODE", size), 0);
   let mut context = SegmentContext::new(start_segment);
-  context.add_default_segment("RODATA", ABS_SIZE);
-  context.add_default_segment("BSS", ABS_SIZE);
-  context.add_default_segment("DATA", ABS_SIZE);
+  let size = match model {
+    MemoryModel::Huge => ADDR_SIZE_FAR,
+    _ => ABS_SIZE,
+  };
+  context.add_default_segment("RODATA", size);
+  context.add_default_segment("BSS", size);
+  context.add_default_segment("DATA", size);
   context.add_default_segment("ZEROPAGE", ZP_SIZE);
   context.add_default_segment("NULL", ABS_SIZE);
   context

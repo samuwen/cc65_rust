@@ -1,13 +1,13 @@
-use crate::{FilePos, GlobalContext, Span};
+use crate::{FilePos, Span};
 use std::collections::HashMap;
 
-pub fn init_line_info(global_context: &mut GlobalContext) -> LineInfoContext {
-  let file_pos = FilePos::new();
-  let _line_info_list: Vec<usize> = Vec::with_capacity(200);
-  let mut context = LineInfoContext::new();
-  let li = LineInfo::start_line(file_pos, 0, 0, &mut context, global_context);
-  context
-}
+// pub fn _init_line_info(global_context: &mut OldContext) -> LineInfoContext {
+//   let file_pos = FilePos::new();
+//   let _line_info_list: Vec<usize> = Vec::with_capacity(200);
+//   let mut context = LineInfoContext::new();
+//   let li = LineInfo::start_line(file_pos, 0, 0, &mut context, global_context);
+//   context
+// }
 
 pub enum LineInfoType {
   Asm,
@@ -50,21 +50,21 @@ pub struct LineInfo {
 }
 
 impl LineInfo {
-  pub fn start_line(
-    pos: FilePos,
-    key_type: usize,
-    count: usize,
-    li_context: &mut LineInfoContext,
-    global_context: &mut GlobalContext,
-  ) {
-    let key = LineInfoKey::new(LineInfoType::make_type(key_type, count), pos);
-    let mut li = match li_context.find_line_info(&key) {
-      Some(li) => li.clone(),
-      None => LineInfo::new(key),
-    };
-    li.open_span_list(global_context);
-    li_context.add_line_info(li);
-  }
+  // pub fn start_line(
+  //   pos: FilePos,
+  //   key_type: usize,
+  //   count: usize,
+  //   li_context: &mut LineInfoContext,
+  //   global_context: &mut OldContext,
+  // ) {
+  //   let key = LineInfoKey::new(LineInfoType::make_type(key_type, count), pos);
+  //   let mut li = match li_context.find_line_info(&key) {
+  //     Some(li) => li.clone(),
+  //     None => LineInfo::new(key),
+  //   };
+  //   li.open_span_list(global_context);
+  //   li_context.add_line_info(li);
+  // }
 
   fn new(key: LineInfoKey) -> LineInfo {
     LineInfo {
@@ -77,18 +77,18 @@ impl LineInfo {
     }
   }
 
-  fn open_span_list(&mut self, global_context: &mut GlobalContext) {
-    let active_segment = global_context.get_active_segment();
-    let span = Span::new(active_segment);
-    self.spans.push(span);
-    let segment_list = global_context.get_segment_list();
-    for segment in segment_list {
-      if segment != active_segment {
-        let span = Span::new(segment);
-        self.spans.push(span);
-      }
-    }
-  }
+  // fn open_span_list(&mut self, global_context: &mut OldContext) {
+  //   let active_segment = global_context.get_active_segment();
+  //   let span = Span::new(active_segment);
+  //   self.spans.push(span);
+  //   let segment_list = global_context.get_segment_list();
+  //   for segment in segment_list {
+  //     if segment != active_segment {
+  //       let span = Span::new(segment);
+  //       self.spans.push(span);
+  //     }
+  //   }
+  // }
 }
 
 #[derive(Eq, PartialEq, Hash, Clone)]
@@ -110,7 +110,7 @@ pub struct LineInfoContext {
 }
 
 impl LineInfoContext {
-  fn new() -> LineInfoContext {
+  pub fn new() -> LineInfoContext {
     LineInfoContext {
       table: HashMap::new(),
       active_line: 0,
