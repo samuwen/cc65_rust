@@ -1,5 +1,6 @@
 #![feature(const_fn, const_fn_fn_ptr_basics)]
 mod data_types;
+mod errors;
 mod utils;
 
 use data_types::*;
